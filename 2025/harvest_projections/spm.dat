@@ -1,0 +1,53 @@
+#rn
+run_9
+#Tier
+3
+#nalts
+7
+#alts
+1 2 3 4 5 6 7
+#tac_flag
+1    
+#srr_type
+1    
+#srr_form
+1    
+#srr_conditioning
+0    
+#srr_reserved
+0  
+#spm_detail_flag
+1    
+#nprj_yrs
+17
+#nsims
+1000 
+#beg_yr
+2023
+#nyrs_fixed_catch
+6
+#nspp
+1 
+#OY_min
+10
+#OY_max                      
+800  # Note that this is for age-structured species    1930.148               
+#data_files for each species                 
+data/ForProjections.dat 
+#ABC_mults                                           
+1
+#scalars                   
+1000
+#alt4_spr                   
+0.6
+#nTAC_cat
+1 
+#TACind
+1
+#fixed_catch           
+  2023  60   #realized catch
+  2024  77   #realized catch
+  2025  68.8   #estimated catch adding on all time avg proportion of sep-dec catch: est_catch = current_catch/(1-avgprop_endyr)
+  2026  83   #5-yr average catch
+  2027  83   #5-yr average catch
+  2028  83   #5-yr average catch
