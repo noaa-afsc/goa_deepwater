@@ -103,7 +103,7 @@ ggsave(proj_plot,file = file.path(run_dir,"spm_plot.png"),device = "png",height=
 tot_biom<-bdf %>% select(c(Year,Alt,Sim,SSB,F,Tot_biom,OFL,ABC)) %>% filter(Alt==2) %>%
   group_by(Year,Alt) %>%
   summarize(meanTot_biom = mean(Tot_biom*1000))
-write.csv(tot_biom,file.path(run_dir,"tot_biom_df.csv"))
+#write.csv(tot_biom,file.path(run_dir,"tot_biom_df.csv"))
 names(tot_biom)<-c("Year","Alt","tot_biom")
 write.csv(tot_biom,file.path(run_dir,"tot_biom.csv"))
 
