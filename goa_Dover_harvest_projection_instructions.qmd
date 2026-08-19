@@ -1,0 +1,258 @@
+---
+title: "GOA Dover sole harvest projection instructions"
+author: "Carey McGilliard"
+format: html
+editor: visual
+---
+
+## Dover sole harvest projections
+
+Dover sole is the Tier 3a component of the deepwater flatfish complex. This document provides the methods used to complete the 2026 harvest projections for Dover sole. The other components of the complex are Tier 6 and no projections are necessary. Prior to running this code, I created a new folder: C:\Users\carey.mcgilliard\Work\FlatfishAssessments\\2026\goa\_deepwater\harvest\_projections
+
+I then copied in spm.dat, tapcar.dat, and the data folder with its contents from the folder for the previous year's projections: C:\Users\carey.mcgilliard\Work\FlatfishAssessments\\2025\deepwater\harvest\_projections
+
+I did not copy in spm.exe, but rather got the latest version from the spmR repository. The current location is: https://github.com/afsc-assessments/spmR However, we are supposed to move all of our operational repositories to be in the Enterprise, so check to see if it's there if it's not at this link.
+
+## Load necessary libraries:
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+library(lubridate)
+devtools::install_github(repo = "afsc-assessments/spmR", dependencies = TRUE, 
+                         build_vignettes = FALSE)
+library(spmR)
+```
+
+This function should be in spmR library but it's not incorporated into namespace the right way - something to come back to later
+
+```{r}
+source("C:/Users/carey.mcgilliard/Work/FlatfishAssessments/2026/goa_deepwater/R/make_tier3a_exec_table.R")
+```
+
+Some options (but if re-running later and you don't want to change the date be careful). For 2026 the month and day of the most recent data queried for the harvest projections is August 1, 2026. Below, I calculate the average proportion of the catch that occurs after August 1 and use this to calculate the estimated current year catch as catch-to-date/(1-end-of-year-proportion) = total estimated catch
+
+```{r}
+the_month = lubridate::month(today())  #the month when the data are being pulled
+end_year = 2026
+the_dir<-"C:\\Users\\carey.mcgilliard\\Work\\FlatfishAssessments\\2026\\goa_deepwater\\data"
+run_dir<-"C:\\Users\\carey.mcgilliard\\Work\\FlatfishAssessments\\2026\\goa_deepwater\\harvest_projections"
+run_dir2<-"C:\\Users\\carey.mcgilliard\\Work\\FlatfishAssessments\\2026\\goa_deepwater\\harvest_projections"
+plot_dir<-"C:\\Users\\carey.mcgilliard\\Work\\FlatfishAssessments\\2026\\goa_deepwater\\plots\\"
+model_dir<-"C:/Users/carey.mcgilliard/Work/FlatfishAssessments/2023/Dover/Runs/Run9_Combine5and8_maxvar_francis_adjshallowwts"
+
+#the_day = lubridate::day(today())
+```
+
+## Store email username with password
+
+```{r}
+#key_set_with_value(service = "service or email", 
+#                   username = "your_address@example.com",
+#                   password = "test password")
+
+afsc_user  =  keyring::key_list("afsc")$username  ## enter afsc username
+afsc_pwd   = keyring::key_get("afsc", keyring::key_list("afsc")$username)   ## enter afsc password
+akfin_user = keyring::key_list("akfin")$username ## enter AKFIN username
+akfin_pwd  =  keyring::key_get("akfin", keyring::key_list("akfin")$username)   ## enter AKFIN password
+
+
+afsc = DBI::dbConnect(odbc::odbc(), "afsc",
+                      UID = afsc_user, PWD = afsc_pwd)
+akfin = DBI::dbConnect(odbc::odbc(), "akfin",
+                       UID = akfin_user, PWD = akfin_pwd)
+```
+
+## Query the Council catch blend data from AKFIN
+
+```{r, echo = FALSE}
+dplyr::tbl(akfin, dplyr::sql('council.comprehensive_blend_ca')) %>%
+  dplyr::rename_all(tolower) %>%
+  dplyr::filter(agency_species_code %in% 124) %>%
+  dplyr::select(week_end_date = week_end_date,
+                retained_or_discarded = retained_or_discarded,
+                weight_posted = weight_posted,
+                year = year,
+                fmp_area = fmp_area,
+                agency_species_code = agency_species_code,
+                species_group_code = species_group_code,
+                fmp_subarea = fmp_subarea,
+                reporting_area_code =reporting_area_code,
+                species_name = species_name,
+                species_group_name = species_group_name) %>%
+  dplyr::collect() -> .the_data
+```
+
+## Find the estimated catch and five year average catch
+
+The estimated catch is the catch-to-date/(1-average proportion caught at the end of the year)
+
+```{r, echo = FALSE}
+the_data<-.the_data %>%
+  rename_with(tolower) %>%
+  dplyr::filter(fmp_area == 'GOA') %>%
+  dplyr::mutate(weight_posted = ifelse(is.na(weight_posted), 0, weight_posted)) %>%
+  dplyr::mutate(day = lubridate::day(week_end_date),month = lubridate::month(week_end_date))
+
+#find the latest data (this needs to be generalized to work every year)
+late<-the_data %>% filter(year == end_year,month==the_month) %>%
+  mutate(end_date= max(as.numeric(day)))
+
+end_day<-unique(late$end_date)
+end_month<-unique(late$month)
+
+#a table of the end-of-year catches over time
+endyr_dat<-the_data %>% filter(month>=end_month) %>%
+  select(c(year,agency_species_code,weight_posted)) %>%
+  group_by(year,agency_species_code) %>%
+  summarize(endyr_weight = sum(weight_posted))
+
+# a table of the past full-year catches over time
+past_dat<-the_data %>% select(c(year,agency_species_code,weight_posted)) %>%
+  group_by(year,agency_species_code) %>%
+  summarize(tot_weight = sum(weight_posted)) %>%
+  left_join(endyr_dat) %>%
+  mutate(prop_endyr = endyr_weight/tot_weight) %>%
+  filter(!is.na(prop_endyr),year<end_year)
+
+# average proportion caught at the end of the year (the period after the current year data ends)
+mean_prop<-past_dat %>% group_by(agency_species_code) %>%
+                        summarize(mean_prop = mean(prop_endyr))
+
+# the estimated current year catch to enter into the spm.dat file
+est_catch<-the_data %>% group_by(year,agency_species_code) %>%
+         summarize(tot_weight = sum(weight_posted)) %>%
+         filter(year == end_year) %>%
+         left_join(mean_prop) %>%
+         mutate(est_weight = tot_weight/(1-mean_prop))
+
+# write everything out
+write.csv(past_dat,file.path(the_dir,"past_catch.csv"))
+write.csv(est_catch,file.path(the_dir,"current_estimated_catch.csv"))
+write.csv(the_data,file.path(the_dir,"council_blend_data.csv"))
+
+# calculate average catches
+the_codes<-the_data %>% distinct(agency_species_code,species_name)
+all_dat <-the_data %>% group_by(year,agency_species_code) %>%
+           summarize(tot_weight=sum(weight_posted)) %>%
+           pivot_wider(names_from = agency_species_code,values_from = tot_weight)
+write.csv(all_dat,file.path(the_dir,"yearly_catch_by_species.csv"))
+write.csv(the_codes,file.path(the_dir,"species_names_and_codes.csv"))
+#Find average complete catches for the last 5 years
+avg_catches<-past_dat %>% filter(year>=end_year-5) %>% ungroup() %>%
+  group_by(agency_species_code) %>%
+  summarize(avg_catches = mean(tot_weight))
+
+write.csv(avg_catches,file = file.path(the_dir,"five_yr_avg_catch.csv"))
+```
+
+## Stopped here and set up projections manually
+
+Something was wrong with the spmR library at the time I did the projections. So, I compiled the latest spm.tpl file myself from the spmR repo using ADMB 13.0. I put the spm.exe in the folder for running projections, which was "C:\Users\carey.mcgilliard\Work\FlatfishAssessments\\2026\goa\_deepwater\harvest\_projections", and I ran it from the command line after entering the estimated catch for 2026 and the 5 year average catch (both calculated above) for years current + 1 and current + 2.
+
+## After running the projections, used this function to make a table formatted with the executive summary table information in it. It's just a .csv file that can be pasted into Excel
+
+```{r, echo = FALSE}
+exec<-make_tier3a_exec_table(run_dir,endyr=end_year,the_scalar=1000)
+```
+
+## In this section I am using some code written by Jim Ianelli for the R integration of spmR to make some plots
+
+```{r, echo = FALSE}
+# bdf <- runSPM(run_dir,run=FALSE)
+# df <- readr::read_csv(file.path(run_dir,"spm_summary.csv"))
+# inp <- spmR::dat2list(file.path(run_dir,"spm.dat"))
+# fc <- data.frame(Year=inp$fixed_catch[,1], mean=inp$fixed_catch[,2], type='C')# |>
+# names(fc) <- c("Year", "mean", "type")
+# fc <- fc |> expand_grid(Alt=c(1,3,5,7)) |> mutate(Alt=as.factor(Alt), ub=mean,lb=mean)
+# proj_plot<-plotSPM(df) + geom_point(data=fc,aes(x=Year,y=mean)) + theme_classic()
+# ggsave(proj_plot,file = file.path(run_dir,"spm_plot.png"),device = "png",height= 6, width = 8)
+# 
+# tot_biom<-bdf %>% select(c(Year,Alt,Sim,SSB,F,Tot_biom,OFL,ABC)) %>% filter(Alt==2) %>%
+#   group_by(Year,Alt) %>%
+#   summarize(meanTot_biom = mean(Tot_biom*1000))
+# write.csv(tot_biom,file.path(run_dir,"tot_biom_df.csv"))
+# names(tot_biom)<-c("Year","Alt","tot_biom")
+# write.csv(tot_biom,file.path(run_dir,"tot_biom.csv"))
+```
+
+## Do projections for the five-year projection table by running projections again with updated future catch assumptions
+
+First, I made a new folder here: C:\Users\carey.mcgilliard\Work\FlatfishAssessments\\2026\goa\_deepwater\five\_year_harvest_projection_table
+
+I copied in spm.dat, tapcar.dat, spm.exe, and the data folder (with contents) from the regular harvest_projections folder (C:\Users\carey.mcgilliard\Work\FlatfishAssessments\\2026\goa\_deepwater\harvest\_projections). I looked at the ABC for current year + 1 and current year + 2 and entered it as realized catches for those years in in spm.dat. I added two more years to the future catches in spm.dat and entered the 5 year average catch for these years, and adjusted nyrs_fixed_catch = 7. I then ran spm.exe from the command line.
+
+## Make the 5-year projection table
+
+Here were the instructions from the stock assessment guidelines: Provide a table of 5 year projections using the author recommend catch for model end years +1 and +2 based on the author’s catch projection recommendation, and Scenario 3, as described in the Standard Harvest Scenarios and Projection Methodology, for model end years +3 to +5 with the following headers: Year, Expected Catch, OFL, ABC, Mean SSB, Mean Relative Spawning Biomass (ratio of female spawning biomass to equilibrium unfished female spawning biomass (B100%)).
+
+```{r, echo = FALSE}
+source("~/FlatfishAssessments/2026/goa_deepwater/R/five_year_hp_table.R", echo = TRUE)
+five_year_hp_table(hp_dir = run_dir2)
+```
+
+## Make the required plots
+
+First open a connection to akfin
+
+```{r}
+# Store email username with password
+#key_set_with_value(service = "service or email", 
+#                   username = "your_address@example.com",
+#                   password = "test password")
+
+afsc_user  =  keyring::key_list("afsc")$username  ## enter afsc username
+afsc_pwd   = keyring::key_get("afsc", keyring::key_list("afsc")$username)   ## enter afsc password
+akfin_user = keyring::key_list("akfin")$username ## enter AKFIN username
+akfin_pwd  =  keyring::key_get("akfin", keyring::key_list("akfin")$username)   ## enter AKFIN password
+
+
+afsc = DBI::dbConnect(odbc::odbc(), "afsc",
+                      UID = afsc_user, PWD = afsc_pwd)
+akfin = DBI::dbConnect(odbc::odbc(), "akfin",
+                       UID = akfin_user, PWD = akfin_pwd)
+```
+
+Next pull and organize the survey data
+
+```{r}
+ srv_sp_str <- "10180"
+ dplyr::tbl(akfin, dplyr::sql('gap_products.akfin_biomass_v')) %>%
+    dplyr::rename_all(tolower) %>%
+    dplyr::filter(species_code %in% srv_sp_str) %>%
+    dplyr::select(survey_definition_id = survey_definition_id,
+                  area_id = area_id,
+                  design_year = design_year,
+                  year = year,
+                  regulatory_area = regulatory_area,
+                  species_code = species_code,
+                 biomass_mt = biomass_mt,
+                 biomass_var = biomass_var) %>%
+    dplyr::collect() -> biomass_data
+ 
+ bio<-biomass_data |>
+   dplyr::filter(survey_definition_id == '47',
+                 area_id == 803 | area_id==804 | area_id==805) %>%
+   dplyr::group_by(year) %>%
+   dplyr::summarise(obs = sum(biomass_mt),biomass_var = sum(biomass_var)) %>%
+   dplyr::mutate(sd=sqrt(biomass_var), cv=sd/obs, se_log=sqrt(log(1+cv^2)))
+```
+
+Make the survey biomass plot
+
+```{r}
+source("~/FlatfishAssessments/2026/goa_deepwater/R/survey_biomass_plot.R", echo = TRUE)
+plot_srv_index(new_dat = bio, term_yr=2026,plot_dir=plot_dir)
+```
+
+Now make the catch-to-biomass ratio plot, which requires projection info, assessment info, and catch info, so read in assessment file from r4ss
+
+```{r}
+
+source("~/FlatfishAssessments/2026/goa_deepwater/R/catch_to_biomass_plot.R", echo = FALSE)
+gg<-catch_to_biomass_plot(hp_dir = run_dir2,plot_dir,model_dir = model_dir,current_year = end_year)
+```
+
+The harvest projection document was done in Word in 2026, but a template for quarto was started at: "C:/Users/carey.mcgilliard/Work/FlatfishAssessments/2026/goa_deepwater\\goa_deep_harvest_projections_2026.qmd". This will be an easy conversion once the complicated executive summary table is figured out.
